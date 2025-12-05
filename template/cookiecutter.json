@@ -1,0 +1,79 @@
+{
+  "_template": "template/",
+
+  "project_name": "My Awesome Project",
+  "project_slug": "{{ cookiecutter.project_name.lower().replace(' ', '-').replace('_', '-') }}",
+  "project_short_description": "A FastAPI + Lit web application with OAuth and multi-tenancy",
+  "author_name": "Your Name",
+  "author_email": "your.email@example.com",
+
+  "_copy_without_render": [
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "*.egg-info",
+    ".coverage",
+    ".coverage.*",
+    "htmlcov",
+    "coverage",
+    ".DS_Store",
+    "Thumbs.db",
+    "*.log",
+    ".ruff_cache",
+    ".vscode",
+    ".idea",
+    "observability/grafana/dashboards/*.json"
+  ],
+
+  "postgres_version": "18",
+  "postgres_db": "{{ cookiecutter.project_slug.replace('-', '_') }}_db",
+  "postgres_user": "{{ cookiecutter.project_slug.replace('-', '_') }}_user",
+  "postgres_password": "change_me_in_production",
+  "postgres_port": "5435",
+  "postgres_app_user": "{{ cookiecutter.project_slug.replace('-', '_') }}_app_user",
+  "postgres_app_password": "app_password_dev",
+  "postgres_migration_user": "{{ cookiecutter.project_slug.replace('-', '_') }}_migration_user",
+  "postgres_migration_password": "migration_password_dev",
+
+  "redis_version": "7",
+  "redis_password": "{{ cookiecutter.project_slug.replace('-', '_') }}_redis_pass",
+  "redis_port": "6379",
+
+  "keycloak_version": "23.0",
+  "keycloak_port": "8080",
+  "keycloak_admin": "admin",
+  "keycloak_admin_password": "admin",
+  "keycloak_realm_name": "{{ cookiecutter.project_slug }}-dev",
+  "keycloak_backend_client_id": "{{ cookiecutter.project_slug }}-backend",
+  "keycloak_frontend_client_id": "{{ cookiecutter.project_slug }}-frontend",
+
+  "backend_port": "8000",
+  "backend_api_prefix": "/api/v1",
+  "python_version": "3.13",
+
+  "frontend_port": "5173",
+  "node_version": "20",
+
+  "include_observability": "yes",
+
+  "prometheus_version": "v2.54.1",
+  "grafana_version": "11.3.0",
+  "loki_version": "3.2.1",
+  "promtail_version": "3.2.1",
+  "tempo_version": "2.6.1",
+
+  "grafana_port": "3000",
+  "prometheus_port": "9090",
+  "loki_port": "3100",
+  "tempo_http_port": "3200",
+  "tempo_otlp_grpc_port": "4317",
+  "tempo_otlp_http_port": "4318",
+
+  "license": ["MIT", "BSD-3-Clause", "Apache-2.0", "GPL-3.0", "Proprietary"]
+}

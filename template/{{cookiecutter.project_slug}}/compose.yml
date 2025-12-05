@@ -1,0 +1,375 @@
+services:
+  # PostgreSQL {{ cookiecutter.postgres_version }} Database
+  postgres:
+    image: postgres:{{ cookiecutter.postgres_version }}-alpine
+    container_name: {{ cookiecutter.project_slug }}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-{{ cookiecutter.postgres_db }}}
+      POSTGRES_USER: ${POSTGRES_USER:-{{ cookiecutter.postgres_user }}}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-{{ cookiecutter.postgres_password }}}
+    ports:
+      - "${POSTGRES_PORT:-{{ cookiecutter.postgres_port }}}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-{{ cookiecutter.postgres_user }}} -d ${POSTGRES_DB:-{{ cookiecutter.postgres_db }}}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+
+  # Keycloak OAuth/OIDC Provider
+  keycloak:
+    image: quay.io/keycloak/keycloak:{{ cookiecutter.keycloak_version }}
+    container_name: {{ cookiecutter.project_slug }}-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      # Admin credentials (development only - change in production)
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-{{ cookiecutter.keycloak_admin }}}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-{{ cookiecutter.keycloak_admin_password }}}
+
+      # Database configuration (PostgreSQL)
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: ${POSTGRES_USER:-{{ cookiecutter.postgres_user }}}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-{{ cookiecutter.postgres_password }}}
+
+      # Hostname configuration (use localtest.me for host/Docker compatibility)
+      KC_HOSTNAME: keycloak.localtest.me
+      KC_HOSTNAME_PORT: {{ cookiecutter.keycloak_port }}
+      KC_HTTP_ENABLED: "true"
+
+      # Proxy configuration (for reverse proxy scenarios)
+      KC_PROXY: edge
+    ports:
+      - "${KEYCLOAK_PORT:-{{ cookiecutter.keycloak_port }}}:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      - ./keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | head -1 | grep -q 'HTTP/1.1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      {{ cookiecutter.project_slug }}-network:
+        aliases:
+          - keycloak.localtest.me
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: {{ cookiecutter.project_slug }}-backend
+    restart: unless-stopped
+    environment:
+      # Application
+      ENV: ${ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # Multi-Tenancy Mode: Separate users for RLS enforcement
+      # Database - Application Runtime (uses {{ cookiecutter.postgres_app_user }} - NO BYPASSRLS)
+      DATABASE_URL: postgresql+asyncpg://{{ cookiecutter.postgres_app_user }}:{{ cookiecutter.postgres_app_password }}@postgres:5432/${POSTGRES_DB:-{{ cookiecutter.postgres_db }}}
+
+      # Database - Migrations (uses {{ cookiecutter.postgres_migration_user }} - with BYPASSRLS)
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://{{ cookiecutter.postgres_migration_user }}:{{ cookiecutter.postgres_migration_password }}@postgres:5432/${POSTGRES_DB:-{{ cookiecutter.postgres_db }}}
+
+      # Database - Connection Details (for legacy compatibility)
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-{{ cookiecutter.postgres_db }}}
+      POSTGRES_USER: ${POSTGRES_USER:-{{ cookiecutter.postgres_user }}}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-{{ cookiecutter.postgres_password }}}
+
+      # Redis
+      REDIS_URL: redis://default:${REDIS_PASSWORD:-{{ cookiecutter.redis_password }}}@redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-{{ cookiecutter.redis_password }}}
+
+      # API Configuration
+      API_V1_PREFIX: ${API_V1_PREFIX:-{{ cookiecutter.backend_api_prefix }}}
+
+      # OAuth Configuration (use localtest.me for host/Docker compatibility)
+      OAUTH_ISSUER_URL: http://keycloak.localtest.me:{{ cookiecutter.keycloak_port }}/realms/{{ cookiecutter.keycloak_realm_name }}
+{% if cookiecutter.include_observability == "yes" %}
+
+      # OpenTelemetry Configuration (for observability)
+      OTEL_SERVICE_NAME: backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+{% endif %}
+    ports:
+      - "${BACKEND_PORT:-{{ cookiecutter.backend_port }}}:8000"
+    volumes:
+      - ./backend:/app
+      - backend_cache:/app/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000{{ cookiecutter.backend_api_prefix }}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+
+  # Frontend (Modern Web)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: {{ cookiecutter.project_slug }}-frontend
+    restart: unless-stopped
+    environment:
+      # Backend API URL (accessible from browser)
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:{{ cookiecutter.backend_port }}}
+      VITE_API_PREFIX: ${API_V1_PREFIX:-{{ cookiecutter.backend_api_prefix }}}
+
+      # Node environment
+      NODE_ENV: ${NODE_ENV:-development}
+    ports:
+      - "${FRONTEND_PORT:-{{ cookiecutter.frontend_port }}}:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+
+  # Redis Cache
+  redis:
+    image: redis:{{ cookiecutter.redis_version }}-alpine
+    container_name: {{ cookiecutter.project_slug }}-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-{{ cookiecutter.redis_password }}}
+    ports:
+      - "${REDIS_PORT:-{{ cookiecutter.redis_port }}}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+{% if cookiecutter.include_observability == "yes" %}
+
+  # ============================================================================
+  # OBSERVABILITY STACK
+  # ============================================================================
+  # The following services provide metrics, logging, tracing, and visualization.
+  # Per NFR-RL-001: Backend does NOT depend on these services (fail-open pattern).
+  # Application continues to function normally when observability is unavailable.
+  # ============================================================================
+
+  # Prometheus - Metrics Collection and Storage
+  # Scrapes metrics from backend and other services, stores time-series data
+  prometheus:
+    image: prom/prometheus:{{ cookiecutter.prometheus_version }}
+    container_name: {{ cookiecutter.project_slug }}-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "${PROMETHEUS_PORT:-{{ cookiecutter.prometheus_port }}}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+    # Resource limits (OQ-011): Uncomment to enable resource constraints
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: '0.5'
+    #     reservations:
+    #       memory: 256M
+
+  # Loki - Log Aggregation and Storage
+  # Receives logs from Promtail, provides log queries for Grafana
+  loki:
+    image: grafana/loki:{{ cookiecutter.loki_version }}
+    container_name: {{ cookiecutter.project_slug }}-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "${LOKI_PORT:-{{ cookiecutter.loki_port }}}:3100"
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+    # Resource limits (OQ-011): Uncomment to enable resource constraints
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: '0.5'
+    #     reservations:
+    #       memory: 256M
+
+  # Promtail - Docker Container Log Collection
+  # Collects container logs via Docker socket and ships them to Loki
+  # OQ-008: Uses Docker socket approach for log collection
+  # WARNING: Docker socket access provides root-equivalent permissions.
+  # Ensure proper access controls in production environments.
+  promtail:
+    image: grafana/promtail:{{ cookiecutter.promtail_version }}
+    container_name: {{ cookiecutter.project_slug }}-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+    # Resource limits (OQ-011): Uncomment to enable resource constraints
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 256M
+    #       cpus: '0.25'
+    #     reservations:
+    #       memory: 128M
+
+  # Tempo - Distributed Tracing Backend
+  # Receives traces via OpenTelemetry Protocol (OTLP), stores for Grafana queries
+  tempo:
+    image: grafana/tempo:{{ cookiecutter.tempo_version }}
+    container_name: {{ cookiecutter.project_slug }}-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "${TEMPO_HTTP_PORT:-{{ cookiecutter.tempo_http_port }}}:3200"      # Tempo API
+      - "${TEMPO_OTLP_GRPC_PORT:-{{ cookiecutter.tempo_otlp_grpc_port }}}:4317"  # OTLP gRPC
+      - "${TEMPO_OTLP_HTTP_PORT:-{{ cookiecutter.tempo_otlp_http_port }}}:4318"  # OTLP HTTP
+    volumes:
+      - ./observability/tempo/tempo.yml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3200/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+    # Resource limits (OQ-011): Uncomment to enable resource constraints
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: '0.5'
+    #     reservations:
+    #       memory: 256M
+
+  # Grafana - Unified Visualization Platform
+  # Provides dashboards for metrics (Prometheus), logs (Loki), and traces (Tempo)
+  grafana:
+    image: grafana/grafana:{{ cookiecutter.grafana_version }}
+    container_name: {{ cookiecutter.project_slug }}-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-{{ cookiecutter.grafana_port }}}:3000"
+    environment:
+      # Feature toggles for trace correlation
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - ./observability/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - {{ cookiecutter.project_slug }}-network
+    # Resource limits (OQ-011): Uncomment to enable resource constraints
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: '0.5'
+    #     reservations:
+    #       memory: 256M
+{% endif %}
+
+volumes:
+  postgres_data:
+    name: {{ cookiecutter.project_slug }}-postgres-data
+  redis_data:
+    name: {{ cookiecutter.project_slug }}-redis-data
+  backend_cache:
+    name: {{ cookiecutter.project_slug }}-backend-cache
+  keycloak_data:
+    name: {{ cookiecutter.project_slug }}-keycloak-data
+    driver: local
+{% if cookiecutter.include_observability == "yes" %}
+  # Observability stack volumes
+  prometheus_data:
+    name: {{ cookiecutter.project_slug }}-prometheus-data
+  loki_data:
+    name: {{ cookiecutter.project_slug }}-loki-data
+  tempo_data:
+    name: {{ cookiecutter.project_slug }}-tempo-data
+  grafana_data:
+    name: {{ cookiecutter.project_slug }}-grafana-data
+{% endif %}
+
+networks:
+  {{ cookiecutter.project_slug }}-network:
+    name: {{ cookiecutter.project_slug }}-network
+    driver: bridge

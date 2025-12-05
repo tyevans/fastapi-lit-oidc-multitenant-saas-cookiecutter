@@ -1,0 +1,2 @@
+[] we removed the ability to generate projects without multitenancy or rate limiting, we should make sure we got all the docs cleaned up properly.
+[] move to using uv and a pyproject.toml for the backend
