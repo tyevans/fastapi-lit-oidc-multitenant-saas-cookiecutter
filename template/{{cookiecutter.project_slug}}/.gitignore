@@ -55,6 +55,8 @@ build/
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
 
 # IDE
 .vscode/
@@ -86,6 +88,10 @@ Thumbs.db
 *.log
 logs/
 
+# Database backups (contain sensitive data)
+backups/
+!backups/.gitkeep
+
 # Alembic
 alembic/versions/*.py
 !alembic/versions/__init__.py
@@ -95,6 +101,11 @@ test-results/
 playwright-report/
 coverage/
 .nyc_output/
+
+# k6 Load test results
+tests/load/results/*.json
+tests/load/results/*.html
+!tests/load/results/.gitkeep
 
 # Temporary files
 tmp/

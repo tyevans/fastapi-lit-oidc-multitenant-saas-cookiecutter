@@ -24,6 +24,9 @@ from app.services.token_revocation import (
     get_token_revocation_service,
     TokenRevocationService,
 )
+{% if cookiecutter.include_sentry == "yes" %}
+from app.sentry import set_user_context
+{% endif %}
 
 logger = logging.getLogger(__name__)
 
@@ -484,6 +487,17 @@ async def _validate_token_and_get_user(
             "scopes": scopes,
         },
     )
+
+    {% if cookiecutter.include_sentry == "yes" %}
+    # Set Sentry user context for error correlation
+    # This attaches user and tenant info to all Sentry events in this request
+    set_user_context(
+        user_id=token_payload.sub,
+        tenant_id=tenant_id,
+        email=token_payload.email,
+        username=token_payload.name,
+    )
+    {% endif %}
 
     # Return authenticated user context
     return AuthenticatedUser(

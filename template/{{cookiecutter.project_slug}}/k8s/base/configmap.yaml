@@ -1,0 +1,71 @@
+# ConfigMap for {{ cookiecutter.project_name }}
+#
+# Non-sensitive configuration values for the application.
+# Sensitive values (passwords, API keys) should be in Secrets.
+#
+# Override values in overlays for different environments:
+#   overlays/staging/kustomization.yaml:
+#     configMapGenerator:
+#       - name: {{ cookiecutter.project_slug }}-config
+#         behavior: merge
+#         literals:
+#           - ENV=staging
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ cookiecutter.project_slug }}-config
+  labels:
+    app.kubernetes.io/name: {{ cookiecutter.project_slug }}
+    app.kubernetes.io/component: config
+data:
+  # =============================================================================
+  # Environment Settings
+  # =============================================================================
+  ENV: "production"
+  LOG_LEVEL: "info"
+  DEBUG: "false"
+
+  # =============================================================================
+  # API Configuration
+  # =============================================================================
+  API_V1_PREFIX: "{{ cookiecutter.backend_api_prefix }}"
+
+  # =============================================================================
+  # OAuth/OIDC Configuration
+  # =============================================================================
+  # Update OAUTH_ISSUER_URL based on your Keycloak deployment
+  # Example: https://auth.yourdomain.com/realms/{{ cookiecutter.keycloak_realm_name }}
+  OAUTH_ISSUER_URL: "https://auth.example.com/realms/{{ cookiecutter.keycloak_realm_name }}"
+
+  # =============================================================================
+  # Multi-Tenancy Settings
+  # =============================================================================
+  TENANT_CLAIM_NAME: "tenant_id"
+  REQUIRE_TENANT_CLAIM: "true"
+
+  # =============================================================================
+  # Frontend Configuration
+  # =============================================================================
+  # Note: VITE_* variables are build-time for Vite applications.
+  # For runtime configuration, use a config endpoint or environment injection.
+  # These values are provided for reference and nginx environment substitution.
+  VITE_API_URL: "https://api.example.com"
+  VITE_API_PREFIX: "{{ cookiecutter.backend_api_prefix }}"
+{% if cookiecutter.include_observability == "yes" %}
+  # =============================================================================
+  # OpenTelemetry Configuration (Observability)
+  # =============================================================================
+  # Configure these based on your observability stack
+  OTEL_SERVICE_NAME: "backend"
+  # OTLP endpoint - update for your tracing backend (Tempo, Jaeger, etc.)
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo.observability:4317"
+{% endif %}
+  # =============================================================================
+  # Security Headers Configuration
+  # =============================================================================
+  SECURITY_HEADERS_ENABLED: "true"
+  CSP_ENABLED: "true"
+  HSTS_ENABLED: "true"
+  HSTS_MAX_AGE: "31536000"
+  HSTS_INCLUDE_SUBDOMAINS: "true"

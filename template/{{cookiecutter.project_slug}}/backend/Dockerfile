@@ -49,19 +49,45 @@ CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "800
 
 # Stage 4: Production image
 FROM dependencies AS production
+{%- if cookiecutter.include_sentry == "yes" %}
 
-# Create non-root user
+# Sentry release tracking (FR-OPS-004)
+# Set via --build-arg SENTRY_RELEASE=$GIT_SHA in CI/CD
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=${SENTRY_RELEASE}
+{%- endif %}
+
+# OCI Labels for container metadata
+# See: https://github.com/opencontainers/image-spec/blob/main/annotations.md
+LABEL org.opencontainers.image.title="{{ cookiecutter.project_name }} Backend"
+LABEL org.opencontainers.image.description="FastAPI backend service for {{ cookiecutter.project_name }}"
+LABEL org.opencontainers.image.vendor="{{ cookiecutter.author_name }}"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.source="https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}"
+
+# Create non-root user for security
+# Using UID 1000 for compatibility with host user mapping
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 
-# Copy application code
+# Copy application code with correct ownership
 COPY --chown=appuser:appuser . .
 
-# Switch to non-root user
+# Switch to non-root user (security best practice)
 USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Run with production settings
+# Health check configuration
+# Aligns with Kubernetes probe patterns:
+#   --interval=30s    -> periodSeconds: 30
+#   --timeout=10s     -> timeoutSeconds: 10
+#   --start-period=10s -> initialDelaySeconds: 10
+#   --retries=3       -> failureThreshold: 3
+# Uses curl (already installed in base stage for uv installation)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000{{ cookiecutter.backend_api_prefix }}/health || exit 1
+
+# Run with production settings (4 workers for multi-core utilization)
 CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

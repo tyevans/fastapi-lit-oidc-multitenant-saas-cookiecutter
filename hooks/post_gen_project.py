@@ -16,6 +16,9 @@ NC = '\033[0m'  # No Color
 
 # Cookiecutter context variables
 include_observability = "{{ cookiecutter.include_observability }}"
+include_github_actions = "{{ cookiecutter.include_github_actions }}"
+include_sentry = "{{ cookiecutter.include_sentry }}"
+include_kubernetes = "{{ cookiecutter.include_kubernetes }}"
 
 
 def print_info(msg):
@@ -50,6 +53,56 @@ def remove_observability_files(project_dir: Path) -> None:
         print_info("Observability enabled - keeping observability files")
 
 
+def remove_github_actions(project_dir: Path) -> None:
+    """Remove GitHub Actions workflow files when github_actions is disabled."""
+    if include_github_actions.lower() == "no":
+        print_info("GitHub Actions disabled - removing .github/ directory...")
+
+        github_dir = project_dir / ".github"
+        if github_dir.exists():
+            shutil.rmtree(github_dir)
+            print_success("Removed .github/ directory")
+    else:
+        print_info("GitHub Actions enabled - keeping .github/ directory")
+
+
+def remove_sentry_files(project_dir: Path) -> None:
+    """Remove Sentry-related files when Sentry is disabled."""
+    if include_sentry.lower() == "no":
+        print_info("Sentry disabled - removing sentry.py module...")
+
+        # Remove backend sentry module
+        sentry_module = project_dir / "backend" / "app" / "sentry.py"
+        if sentry_module.exists():
+            sentry_module.unlink()
+            print_success("Removed backend/app/sentry.py")
+    else:
+        print_info("Sentry enabled - keeping sentry.py module")
+
+
+def remove_kubernetes_files(project_dir: Path) -> None:
+    """Remove Kubernetes-related files when Kubernetes is disabled."""
+    if include_kubernetes.lower() == "no":
+        print_info("Kubernetes disabled - removing k8s/ directory...")
+
+        # Remove k8s directory
+        k8s_dir = project_dir / "k8s"
+        if k8s_dir.exists():
+            shutil.rmtree(k8s_dir)
+            print_success("Removed k8s/ directory")
+
+        # Remove deploy workflow (requires Kubernetes)
+        deploy_workflow = project_dir / ".github" / "workflows" / "deploy.yml"
+        if deploy_workflow.exists():
+            deploy_workflow.unlink()
+            print_success("Removed .github/workflows/deploy.yml")
+    else:
+        print_info("Kubernetes enabled - keeping k8s/ directory")
+        # Check if GitHub Actions is disabled but Kubernetes is enabled
+        if include_github_actions.lower() == "no":
+            print_warning("Note: Kubernetes enabled but GitHub Actions disabled - deploy workflow not available")
+
+
 def main():
     """Main post-generation setup."""
     project_dir = Path.cwd()
@@ -58,6 +111,9 @@ def main():
 
     # 1. Handle conditional file removal
     remove_observability_files(project_dir)
+    remove_github_actions(project_dir)
+    remove_sentry_files(project_dir)
+    remove_kubernetes_files(project_dir)
 
     # 2. Make scripts executable
     print_info("Making scripts executable...")

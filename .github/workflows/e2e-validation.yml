@@ -1,0 +1,492 @@
+# E2E Deployment Validation Workflow
+# Validates the complete deployment lifecycle for generated projects
+#
+# This workflow:
+# - Generates a project from the template
+# - Builds Docker images
+# - Starts all services
+# - Runs health checks and validation tests
+# - Validates Kubernetes manifests
+# - Runs security scans
+#
+# Triggers:
+# - Push to main (full E2E with Docker)
+# - Pull requests (validation without Docker for faster feedback)
+# - Manual trigger with options
+
+name: E2E Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'template/**'
+      - 'hooks/**'
+      - 'scripts/**'
+      - '.github/workflows/e2e-validation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'template/**'
+      - 'hooks/**'
+      - 'scripts/**'
+      - '.github/workflows/e2e-validation.yml'
+  workflow_dispatch:
+    inputs:
+      run_docker:
+        description: 'Run Docker builds and service tests'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      run_k8s:
+        description: 'Run Kubernetes validation'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      cleanup:
+        description: 'Cleanup after tests'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OUTPUT_DIR: /tmp/e2e-validation
+  PROJECT_SLUG: e2e-validation
+
+jobs:
+  # Quick validation without Docker (runs on PRs)
+  quick-validation:
+    name: Quick Validation (No Docker)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install cookiecutter pyyaml
+
+      - name: Generate project
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="E2E Validation" \
+            project_slug="${PROJECT_SLUG}" \
+            author_name="E2E Test" \
+            author_email="e2e@example.com" \
+            github_username="e2e-test" \
+            include_observability=yes \
+            include_github_actions=yes \
+            include_kubernetes=yes \
+            include_sentry=no \
+            --output-dir "$OUTPUT_DIR"
+
+      - name: Validate file structure
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+
+          # Check required files exist
+          test -f compose.yml || { echo "Missing compose.yml"; exit 1; }
+          test -f backend/app/main.py || { echo "Missing backend/app/main.py"; exit 1; }
+          test -f frontend/package.json || { echo "Missing frontend/package.json"; exit 1; }
+          test -d .github/workflows || { echo "Missing .github/workflows"; exit 1; }
+          test -d k8s/base || { echo "Missing k8s/base"; exit 1; }
+          test -d observability || { echo "Missing observability"; exit 1; }
+
+          echo "File structure validation passed"
+
+      - name: Validate Python syntax
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          find backend -name "*.py" -exec python -m py_compile {} \;
+          echo "Python syntax validation passed"
+
+      - name: Validate YAML syntax
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          python -c "
+          import yaml
+          import os
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', '__pycache__')]
+              for f in files:
+                  if f.endswith(('.yml', '.yaml')):
+                      path = os.path.join(root, f)
+                      with open(path) as fp:
+                          yaml.safe_load(fp)
+                      print(f'OK: {path}')
+          "
+          echo "YAML syntax validation passed"
+
+      - name: Validate JSON syntax
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          python -c "
+          import json
+          import os
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', '__pycache__')]
+              for f in files:
+                  if f.endswith('.json'):
+                      path = os.path.join(root, f)
+                      with open(path) as fp:
+                          json.load(fp)
+                      print(f'OK: {path}')
+          "
+          echo "JSON syntax validation passed"
+
+      - name: Validate CI workflows
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          python -c "
+          import yaml
+
+          workflows = ['.github/workflows/ci.yml', '.github/workflows/build.yml']
+          for wf in workflows:
+              with open(wf) as f:
+                  w = yaml.safe_load(f)
+              assert 'name' in w, f'{wf}: Missing name'
+              assert 'on' in w, f'{wf}: Missing on trigger'
+              assert 'jobs' in w, f'{wf}: Missing jobs'
+              print(f'OK: {wf}')
+          "
+          echo "CI workflow validation passed"
+
+  # Full E2E with Docker (runs on push to main)
+  full-e2e-validation:
+    name: Full E2E Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_docker == 'true')
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install cookiecutter pyyaml requests
+
+      - name: Generate project
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="E2E Validation" \
+            project_slug="${PROJECT_SLUG}" \
+            author_name="E2E Test" \
+            author_email="e2e@example.com" \
+            github_username="e2e-test" \
+            include_observability=yes \
+            include_github_actions=yes \
+            include_kubernetes=yes \
+            include_sentry=no \
+            --output-dir "$OUTPUT_DIR"
+
+      - name: Build Docker images
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          docker compose build
+        timeout-minutes: 15
+
+      - name: Start services
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          docker compose up -d
+          echo "Waiting for services to start..."
+          sleep 30
+
+      - name: Wait for backend health
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          timeout=180
+          elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            if curl -sf http://localhost:8000/api/v1/health > /dev/null 2>&1; then
+              echo "Backend is healthy"
+              exit 0
+            fi
+            sleep 5
+            elapsed=$((elapsed + 5))
+            echo "Waiting... ($elapsed/$timeout seconds)"
+          done
+          echo "Backend failed to become healthy"
+          docker compose logs backend
+          exit 1
+        timeout-minutes: 5
+
+      - name: Run health checks
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+
+          echo "Checking backend health..."
+          curl -sf http://localhost:8000/api/v1/health || exit 1
+
+          echo "Checking PostgreSQL..."
+          docker compose exec -T postgres pg_isready -U e2e_validation_user || echo "PostgreSQL check had issues"
+
+          echo "Checking Redis..."
+          docker compose exec -T redis redis-cli ping || echo "Redis check had issues"
+
+          echo "Health checks completed"
+
+      - name: Check security headers
+        run: |
+          headers=$(curl -sI http://localhost:8000/api/v1/health)
+
+          echo "Response headers:"
+          echo "$headers"
+
+          echo "$headers" | grep -qi "X-Content-Type-Options" || echo "Warning: X-Content-Type-Options missing"
+          echo "$headers" | grep -qi "X-Frame-Options" || echo "Warning: X-Frame-Options missing"
+
+          echo "Security header check completed"
+
+      - name: Check observability stack
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+
+          # Give observability stack time to start
+          sleep 10
+
+          echo "Checking Prometheus..."
+          curl -sf http://localhost:9090/-/healthy || echo "Prometheus not ready"
+
+          echo "Checking Grafana..."
+          curl -sf http://localhost:3000/api/health || echo "Grafana not ready"
+
+          echo "Checking backend metrics..."
+          curl -sf http://localhost:8000/metrics || echo "Metrics endpoint not ready"
+
+          echo "Observability check completed"
+
+      - name: Run API tests
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+
+          # Test OpenAPI schema
+          echo "Testing OpenAPI schema..."
+          curl -sf http://localhost:8000/openapi.json > /dev/null && echo "OpenAPI schema available"
+
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          response=$(curl -sf http://localhost:8000/api/v1/health)
+          echo "Health response: $response"
+
+          echo "API tests completed"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          echo "=== Docker Compose Logs ==="
+          docker compose logs > docker-compose-logs.txt 2>&1 || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-docker-logs
+          path: ${{ env.OUTPUT_DIR }}/${{ env.PROJECT_SLUG }}/docker-compose-logs.txt
+          retention-days: 7
+
+      - name: Stop services
+        if: always()
+        run: |
+          cd "$OUTPUT_DIR/$PROJECT_SLUG"
+          docker compose down -v || true
+
+  # Kubernetes manifest validation
+  kubernetes-validation:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_k8s == 'true'
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install cookiecutter
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Generate project
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="K8s Validation" \
+            project_slug="k8s-validation" \
+            author_name="E2E Test" \
+            author_email="e2e@example.com" \
+            github_username="e2e-test" \
+            include_observability=yes \
+            include_github_actions=yes \
+            include_kubernetes=yes \
+            include_sentry=no \
+            --output-dir "$OUTPUT_DIR"
+
+      - name: Validate Kustomize overlays
+        run: |
+          cd "$OUTPUT_DIR/k8s-validation"
+
+          echo "Validating staging overlay..."
+          kubectl kustomize k8s/overlays/staging > /dev/null
+          echo "Staging overlay is valid"
+
+          echo "Validating production overlay..."
+          kubectl kustomize k8s/overlays/production > /dev/null
+          echo "Production overlay is valid"
+
+      - name: Validate manifests with dry-run
+        run: |
+          cd "$OUTPUT_DIR/k8s-validation"
+
+          echo "Running dry-run validation..."
+          kubectl apply -k k8s/overlays/staging --dry-run=client -o yaml > /dev/null
+          echo "Dry-run validation passed"
+
+      - name: Check manifest structure
+        run: |
+          cd "$OUTPUT_DIR/k8s-validation"
+
+          echo "Checking rendered manifests..."
+          staging_manifests=$(kubectl kustomize k8s/overlays/staging)
+
+          echo "$staging_manifests" | grep -q "kind: Deployment" || { echo "Missing Deployment"; exit 1; }
+          echo "$staging_manifests" | grep -q "kind: Service" || { echo "Missing Service"; exit 1; }
+          echo "$staging_manifests" | grep -q "kind: ConfigMap" || { echo "Missing ConfigMap"; exit 1; }
+
+          echo "Manifest structure validation passed"
+
+  # Security scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install cookiecutter bandit safety
+
+      - name: Generate project
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="Security Scan" \
+            project_slug="security-scan" \
+            author_name="E2E Test" \
+            author_email="e2e@example.com" \
+            github_username="e2e-test" \
+            include_observability=yes \
+            include_github_actions=yes \
+            include_kubernetes=no \
+            include_sentry=no \
+            --output-dir "$OUTPUT_DIR"
+
+      - name: Run Bandit security scan
+        run: |
+          cd "$OUTPUT_DIR/security-scan/backend"
+          bandit -r app/ -ll --skip B101 || true
+        continue-on-error: true
+
+      - name: Check for hardcoded secrets
+        run: |
+          cd "$OUTPUT_DIR/security-scan"
+
+          # Check for potential hardcoded secrets
+          echo "Checking for potential hardcoded secrets..."
+
+          # Exclude test files and examples
+          if grep -r "password\s*=\s*['\"][^'\"]*['\"]" backend/app --include="*.py" | grep -v "example\|test\|mock\|Field\|env=" > /dev/null 2>&1; then
+            echo "Warning: Potential hardcoded password patterns found"
+          fi
+
+          if grep -r "secret\s*=\s*['\"][^'\"]*['\"]" backend/app --include="*.py" | grep -v "example\|test\|mock\|Field\|env=" > /dev/null 2>&1; then
+            echo "Warning: Potential hardcoded secret patterns found"
+          fi
+
+          echo "Secret check completed"
+
+      - name: Verify security configurations
+        run: |
+          cd "$OUTPUT_DIR/security-scan"
+
+          # Check .gitignore
+          grep -q ".env" .gitignore || echo "Warning: .env not in .gitignore"
+          grep -q "__pycache__" .gitignore || echo "Warning: __pycache__ not in .gitignore"
+
+          # Check for security middleware
+          grep -q "SecurityHeadersMiddleware\|security_headers" backend/app/main.py || echo "Note: Security headers middleware should be configured"
+
+          echo "Security configuration check completed"
+
+  # Summary job
+  validation-summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [quick-validation, full-e2e-validation, kubernetes-validation, security-scan]
+    if: always()
+
+    steps:
+      - name: Check job results
+        run: |
+          echo "=== E2E Validation Summary ==="
+          echo ""
+          echo "Quick Validation: ${{ needs.quick-validation.result }}"
+          echo "Full E2E: ${{ needs.full-e2e-validation.result }}"
+          echo "Kubernetes: ${{ needs.kubernetes-validation.result }}"
+          echo "Security: ${{ needs.security-scan.result }}"
+          echo ""
+
+          # Check for failures
+          if [[ "${{ needs.quick-validation.result }}" == "failure" ]] || \
+             [[ "${{ needs.full-e2e-validation.result }}" == "failure" ]] || \
+             [[ "${{ needs.kubernetes-validation.result }}" == "failure" ]] || \
+             [[ "${{ needs.security-scan.result }}" == "failure" ]]; then
+            echo "Some validations failed!"
+            exit 1
+          fi
+
+          echo "All validations passed or were skipped!"

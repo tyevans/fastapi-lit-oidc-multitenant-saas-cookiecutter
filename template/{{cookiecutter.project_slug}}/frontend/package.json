@@ -14,7 +14,10 @@
     "test:coverage": "vitest --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:debug": "playwright test --debug"
+    "test:e2e:debug": "playwright test --debug",
+    "generate:api": "npx @openapitools/openapi-generator-cli generate --config openapitools.json --generator-key typescript-fetch",
+    "generate:api:validate": "npx @openapitools/openapi-generator-cli validate -i ../backend/openapi.json",
+    "generate:api:fetch": "../scripts/generate-api-client.sh --from-url"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -26,24 +29,26 @@
     "@opentelemetry/resources": "^2.2.0",
     "@opentelemetry/sdk-trace-web": "^2.2.0",
     "@opentelemetry/semantic-conventions": "^1.38.0",
-    "lit": "^3.1.0",
-    "oidc-client-ts": "^3.0.1"
+    "lit": "^3.3.0",
+    "oidc-client-ts": "^3.2.0"
   },
   "devDependencies": {
     "@open-wc/testing": "^4.0.0",
-    "@playwright/test": "^1.56.1",
-    "@types/node": "^20.10.6",
-    "@typescript-eslint/eslint-plugin": "^6.16.0",
-    "@typescript-eslint/parser": "^6.16.0",
-    "@vitest/ui": "^4.0.8",
-    "autoprefixer": "^10.4.16",
-    "eslint": "^8.56.0",
-    "happy-dom": "^20.0.10",
-    "postcss": "^8.4.32",
-    "prettier": "^3.1.1",
-    "tailwindcss": "^3.4.0",
-    "typescript": "^5.3.3",
-    "vite": "^5.0.10",
-    "vitest": "^4.0.8"
+    "@openapitools/openapi-generator-cli": "^2.19.0",
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.32.0",
+    "@typescript-eslint/parser": "^8.32.0",
+    "@vitest/coverage-v8": "^3.1.0",
+    "@vitest/ui": "^3.1.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^8.57.0",
+    "happy-dom": "^20.0.11",
+    "postcss": "^8.5.3",
+    "prettier": "^3.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.0",
+    "vitest": "^3.1.0"
   }
 }

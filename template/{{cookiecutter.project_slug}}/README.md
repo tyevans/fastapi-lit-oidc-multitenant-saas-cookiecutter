@@ -1,5 +1,8 @@
 # {{ cookiecutter.project_name }}
 
+{% if cookiecutter.include_github_actions == "yes" %}[![CI](https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/actions/workflows/ci.yml/badge.svg)](https://github.com/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }}/graph/badge.svg)](https://codecov.io/gh/{{ cookiecutter.github_username }}/{{ cookiecutter.project_slug }})
+{% endif %}
 {{ cookiecutter.project_short_description }}
 
 ## Architecture
@@ -493,6 +496,42 @@ docker compose exec backend curl http://keycloak:8080/health
 ```
 
 ## Production Deployment
+{%- if cookiecutter.include_kubernetes == "yes" %}
+
+### Kubernetes Deployment
+
+This project includes Kubernetes manifests for deployment using Kustomize.
+
+#### Quick Start
+
+```bash
+# Deploy to staging
+kubectl apply -k k8s/overlays/staging
+
+# Deploy to production
+kubectl apply -k k8s/overlays/production
+```
+
+#### Structure
+
+```
+k8s/
+  base/                 # Base manifests (shared)
+  overlays/
+    staging/            # Staging environment
+    production/         # Production environment
+```
+
+#### Prerequisites
+
+- Kubernetes cluster (1.25+)
+- kubectl with cluster access
+- External PostgreSQL and Redis
+- OAuth provider (Keycloak)
+
+See [k8s/README.md](k8s/README.md) for detailed deployment instructions.
+
+{%- endif %}
 
 ### Build for Production
 

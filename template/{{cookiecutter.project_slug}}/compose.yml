@@ -13,6 +13,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./backups:/backups  # Mount for database backups (used by db-backup.sh)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-{{ cookiecutter.postgres_user }}} -d ${POSTGRES_DB:-{{ cookiecutter.postgres_db }}}"]
       interval: 10s

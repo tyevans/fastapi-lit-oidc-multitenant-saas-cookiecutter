@@ -22,6 +22,26 @@ global:
   external_labels:
     cluster: '{{ cookiecutter.project_slug }}'
 
+# -----------------------------------------------------------------------------
+# Alerting Rules Configuration
+# -----------------------------------------------------------------------------
+# Rule files specify groups of alerting and recording rules.
+# Rules are evaluated at the evaluation_interval defined above.
+rule_files:
+  - 'alerts.yml'
+
+# -----------------------------------------------------------------------------
+# Alertmanager Configuration (Optional)
+# -----------------------------------------------------------------------------
+# Configure Alertmanager for sending alert notifications.
+# Uncomment and configure when Alertmanager is deployed.
+#
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#             - 'alertmanager:9093'
+
 # Scrape configuration for each monitored service
 scrape_configs:
   # -----------------------------------------------------------------------------

@@ -20,6 +20,12 @@ from app.middleware.tenant import TenantResolutionMiddleware
 {% if cookiecutter.include_observability == "yes" %}
 from app.observability import setup_observability
 {% endif %}
+{% if cookiecutter.include_sentry == "yes" %}
+from app.sentry import init_sentry
+{% endif %}
+{% if cookiecutter.include_security_headers == "yes" %}
+from app.middleware.security import SecurityHeadersMiddleware, SecurityHeadersConfig
+{% endif %}
 
 
 @asynccontextmanager
@@ -56,10 +62,63 @@ app = FastAPI(
     debug=settings.DEBUG
 )
 
+{% if cookiecutter.include_sentry == "yes" %}
+# Initialize Sentry error tracking (fail-open pattern)
+# Must be called early to capture initialization errors from other modules
+sentry_enabled = init_sentry(settings)
+if sentry_enabled:
+    print("Sentry error tracking: enabled")
+else:
+    print("Sentry error tracking: disabled (SENTRY_DSN not configured)")
+{% endif %}
+
 {% if cookiecutter.include_observability == "yes" %}
 # Setup observability (tracing, metrics, logging)
 # Must be called before other middleware to ensure all requests are instrumented
 setup_observability(app)
+{% endif %}
+
+{% if cookiecutter.include_security_headers == "yes" %}
+# Security Headers Middleware (P2-02)
+# Adds security-related HTTP headers to all responses
+# Must be added before CORS middleware to ensure headers are present on all responses
+if settings.SECURITY_HEADERS_ENABLED:
+    # Build connect-src with frontend URL
+    connect_src = settings.CSP_CONNECT_SRC
+    if settings.FRONTEND_URL and settings.FRONTEND_URL not in connect_src:
+        connect_src = f"{connect_src} {settings.FRONTEND_URL}"
+
+    security_config = SecurityHeadersConfig(
+        # CSP Configuration
+        csp_enabled=settings.CSP_ENABLED,
+        csp_default_src=settings.CSP_DEFAULT_SRC,
+        csp_script_src=settings.CSP_SCRIPT_SRC,
+        csp_style_src=settings.CSP_STYLE_SRC,
+        csp_img_src=settings.CSP_IMG_SRC,
+        csp_font_src=settings.CSP_FONT_SRC,
+        csp_connect_src=connect_src,
+        csp_frame_ancestors=settings.CSP_FRAME_ANCESTORS,
+        csp_base_uri=settings.CSP_BASE_URI,
+        csp_form_action=settings.CSP_FORM_ACTION,
+        csp_report_uri=settings.CSP_REPORT_URI or None,
+
+        # HSTS Configuration
+        hsts_enabled=settings.HSTS_ENABLED,
+        hsts_max_age=settings.HSTS_MAX_AGE,
+        hsts_include_subdomains=settings.HSTS_INCLUDE_SUBDOMAINS,
+        hsts_preload=settings.HSTS_PRELOAD,
+
+        # Other Headers
+        x_frame_options=settings.X_FRAME_OPTIONS or None,
+        x_content_type_options=settings.X_CONTENT_TYPE_OPTIONS or None,
+        referrer_policy=settings.REFERRER_POLICY or None,
+        permissions_policy=settings.PERMISSIONS_POLICY or None,
+        x_xss_protection=settings.X_XSS_PROTECTION or None,
+    )
+    app.add_middleware(SecurityHeadersMiddleware, config=security_config)
+    print(f"Security headers: enabled (CSP={settings.CSP_ENABLED}, HSTS={settings.HSTS_ENABLED})")
+else:
+    print("Security headers: disabled via SECURITY_HEADERS_ENABLED=false")
 {% endif %}
 
 # Configure CORS middleware

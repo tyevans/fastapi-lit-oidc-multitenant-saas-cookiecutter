@@ -1,0 +1,39 @@
+# Dependabot for the cookiecutter template repository itself
+# This keeps the template's pinned versions current
+
+version: 2
+updates:
+  # GitHub Actions in this repo
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # Docker base images in template
+  - package-ecosystem: "docker"
+    directory: "/template/{{cookiecutter.project_slug}}/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps(docker)"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/template/{{cookiecutter.project_slug}}/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps(docker)"
+    labels:
+      - "dependencies"
+      - "docker"

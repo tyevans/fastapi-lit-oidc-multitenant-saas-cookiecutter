@@ -76,6 +76,53 @@ class Settings(BaseSettings):
     # Tenant Resolver Configuration (TASK-016)
     TENANT_CACHE_TTL: int = 3600  # Tenant cache TTL in seconds (1 hour)
 
+{%- if cookiecutter.include_sentry == "yes" %}
+    # Sentry Configuration (Optional - P3-03)
+    # Error tracking is enabled when SENTRY_DSN is set
+    SENTRY_DSN: str = "{{ cookiecutter.sentry_dsn }}"  # Empty string disables Sentry
+    SENTRY_ENVIRONMENT: str = "development"  # Environment tag (staging, production)
+    SENTRY_RELEASE: str = ""  # Defaults to APP_VERSION if empty
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1  # 10% of requests traced for performance monitoring
+    SENTRY_PROFILES_SAMPLE_RATE: float = 0.1  # 10% of traces profiled
+{%- endif %}
+
+    # ==========================================================================
+    # Security Headers Configuration (P2-02)
+    # These settings control the SecurityHeadersMiddleware behavior
+    # Reference: OWASP Secure Headers Project
+    # ==========================================================================
+
+    # Master toggle for security headers
+    SECURITY_HEADERS_ENABLED: bool = True
+
+    # Content-Security-Policy (CSP)
+    # Default allows Lit components (requires unsafe-inline for script/style)
+    CSP_ENABLED: bool = True
+    CSP_DEFAULT_SRC: str = "'self'"
+    CSP_SCRIPT_SRC: str = "'self' 'unsafe-inline'"
+    CSP_STYLE_SRC: str = "'self' 'unsafe-inline'"
+    CSP_IMG_SRC: str = "'self' data: https:"
+    CSP_FONT_SRC: str = "'self'"
+    CSP_CONNECT_SRC: str = "'self'"  # Will be extended with FRONTEND_URL in main.py
+    CSP_FRAME_ANCESTORS: str = "'none'"
+    CSP_BASE_URI: str = "'self'"
+    CSP_FORM_ACTION: str = "'self'"
+    CSP_REPORT_URI: str = ""  # Empty = disabled, set to CSP reporting endpoint
+
+    # Strict-Transport-Security (HSTS)
+    # Only applied for HTTPS requests
+    HSTS_ENABLED: bool = True
+    HSTS_MAX_AGE: int = 31536000  # 1 year in seconds
+    HSTS_INCLUDE_SUBDOMAINS: bool = True
+    HSTS_PRELOAD: bool = False  # Requires careful consideration before enabling
+
+    # Other Security Headers
+    X_FRAME_OPTIONS: str = "DENY"  # DENY, SAMEORIGIN, or empty to disable
+    X_CONTENT_TYPE_OPTIONS: str = "nosniff"
+    REFERRER_POLICY: str = "strict-origin-when-cross-origin"
+    PERMISSIONS_POLICY: str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    X_XSS_PROTECTION: str = "1; mode=block"  # Legacy but still useful
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

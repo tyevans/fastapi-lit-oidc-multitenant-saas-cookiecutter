@@ -1,0 +1,266 @@
+# Template Validation Workflow
+# Validates that all cookiecutter option combinations generate valid projects
+#
+# This workflow runs:
+# - On push to main (full validation of template changes)
+# - On PRs that modify template files (minimum matrix for faster feedback)
+#
+# Test matrix:
+# - Minimum: 5 key combinations (runs on PRs)
+# - Full: All 16 combinations (runs on main)
+
+name: Template Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'template/**'
+      - 'hooks/**'
+      - '.github/workflows/template-validation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'template/**'
+      - 'hooks/**'
+      - '.github/workflows/template-validation.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-minimum:
+    name: Validate Template (Minimum Matrix)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: |
+          pip install cookiecutter pytest pyyaml
+
+      - name: Run minimum matrix tests
+        run: |
+          pytest template/tests/ -v -x --ignore=template/tests/test_full_matrix.py
+        timeout-minutes: 10
+
+  validate-full:
+    name: Validate Template (Full Matrix)
+    runs-on: ubuntu-latest
+    # Only run full matrix on push to main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: |
+          pip install cookiecutter pytest pyyaml
+
+      - name: Run full matrix tests
+        run: |
+          pytest template/tests/ -v --full-matrix
+        timeout-minutes: 30
+
+  validate-generation-matrix:
+    name: Validate Generated Project (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "All Features"
+            obs: "yes"
+            gh: "yes"
+            k8s: "yes"
+            sentry: "yes"
+          - name: "Minimal"
+            obs: "no"
+            gh: "no"
+            k8s: "no"
+            sentry: "no"
+          - name: "CI Only"
+            obs: "no"
+            gh: "yes"
+            k8s: "no"
+            sentry: "no"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install cookiecutter
+        run: pip install cookiecutter
+
+      - name: Generate project
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="Test Project" \
+            project_slug="test-project" \
+            author_name="Test Author" \
+            author_email="test@example.com" \
+            github_username="test-user" \
+            include_observability="${{ matrix.obs }}" \
+            include_github_actions="${{ matrix.gh }}" \
+            include_kubernetes="${{ matrix.k8s }}" \
+            include_sentry="${{ matrix.sentry }}" \
+            --output-dir /tmp
+
+      - name: Verify Python syntax
+        run: |
+          cd /tmp/test-project
+          find backend -name "*.py" -exec python -m py_compile {} \;
+          echo "Python syntax validation passed"
+
+      - name: Verify YAML syntax
+        run: |
+          cd /tmp/test-project
+          python -c "
+          import yaml
+          import os
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', '__pycache__')]
+              for f in files:
+                  if f.endswith(('.yml', '.yaml')):
+                      path = os.path.join(root, f)
+                      with open(path) as fp:
+                          yaml.safe_load(fp)
+                      print(f'OK: {path}')
+          "
+          echo "YAML syntax validation passed"
+
+      - name: Verify JSON syntax
+        run: |
+          cd /tmp/test-project
+          python -c "
+          import json
+          import os
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', '__pycache__')]
+              for f in files:
+                  if f.endswith('.json'):
+                      path = os.path.join(root, f)
+                      with open(path) as fp:
+                          json.load(fp)
+                      print(f'OK: {path}')
+          "
+          echo "JSON syntax validation passed"
+
+      - name: Install backend dependencies
+        run: |
+          cd /tmp/test-project/backend
+          uv sync --frozen || uv sync
+
+      - name: Run backend linting
+        run: |
+          cd /tmp/test-project/backend
+          uv run ruff check app/ || true
+
+      - name: Install frontend dependencies
+        run: |
+          cd /tmp/test-project/frontend
+          npm ci
+
+      - name: Run frontend linting
+        run: |
+          cd /tmp/test-project/frontend
+          npm run lint || true
+
+      - name: Verify conditional files
+        run: |
+          cd /tmp/test-project
+
+          # Check observability
+          if [ "${{ matrix.obs }}" = "yes" ]; then
+            test -d observability || { echo "Missing observability directory"; exit 1; }
+          else
+            test ! -d observability || { echo "Unexpected observability directory"; exit 1; }
+          fi
+
+          # Check GitHub Actions
+          if [ "${{ matrix.gh }}" = "yes" ]; then
+            test -d .github || { echo "Missing .github directory"; exit 1; }
+          else
+            test ! -d .github || { echo "Unexpected .github directory"; exit 1; }
+          fi
+
+          # Check Kubernetes
+          if [ "${{ matrix.k8s }}" = "yes" ]; then
+            test -d k8s || { echo "Missing k8s directory"; exit 1; }
+          else
+            test ! -d k8s || { echo "Unexpected k8s directory"; exit 1; }
+          fi
+
+          # Check Sentry
+          if [ "${{ matrix.sentry }}" = "yes" ]; then
+            test -f backend/app/sentry.py || { echo "Missing sentry.py"; exit 1; }
+          else
+            test ! -f backend/app/sentry.py || { echo "Unexpected sentry.py"; exit 1; }
+          fi
+
+          echo "Conditional files validation passed"
+
+  shell-validation:
+    name: Shell Script Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: pip install cookiecutter pyyaml
+
+      - name: Run shell validation script
+        run: |
+          ./scripts/validate-template.sh
+        timeout-minutes: 15

@@ -46,3 +46,8 @@ storybook-static
 # package-lock.json
 # yarn.lock
 # pnpm-lock.yaml
+
+# OpenAPI Generator
+# Uncomment to gitignore generated API client (some teams prefer to commit it)
+# src/api/generated/
+.openapi-generator/

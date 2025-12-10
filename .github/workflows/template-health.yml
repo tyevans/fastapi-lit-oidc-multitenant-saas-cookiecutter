@@ -1,0 +1,183 @@
+# Template Health Check
+# Runs weekly to ensure the template still generates working projects
+# even when dependencies haven't been explicitly updated
+
+name: Template Health Check
+
+on:
+  schedule:
+    # Every Monday at 8am UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  health-check:
+    name: Generate & Test Project
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install cookiecutter
+        run: pip install cookiecutter
+
+      - name: Generate project with all features
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="Health Check Project" \
+            project_slug="health-check" \
+            author_name="CI Bot" \
+            author_email="ci@example.com" \
+            github_username="ci-user" \
+            include_observability="yes" \
+            include_github_actions="yes" \
+            include_kubernetes="yes" \
+            include_sentry="yes" \
+            --output-dir /tmp
+
+      - name: Backend - Install dependencies (fresh)
+        run: |
+          cd /tmp/health-check/backend
+          # Don't use frozen - we want to test with latest compatible versions
+          uv sync
+
+      - name: Backend - Lint
+        run: |
+          cd /tmp/health-check/backend
+          uv run ruff check app/
+
+      - name: Backend - Type check Python files
+        run: |
+          cd /tmp/health-check/backend
+          find app -name "*.py" -exec python -m py_compile {} \;
+
+      - name: Frontend - Install dependencies (fresh)
+        run: |
+          cd /tmp/health-check/frontend
+          # Remove lock file to test with latest compatible versions
+          rm -f package-lock.json
+          npm install
+
+      - name: Frontend - Lint
+        run: |
+          cd /tmp/health-check/frontend
+          npm run lint
+
+      - name: Frontend - Build
+        run: |
+          cd /tmp/health-check/frontend
+          npm run build
+
+      - name: Check dependency versions
+        run: |
+          echo "=== Backend Dependencies ==="
+          cd /tmp/health-check/backend
+          uv pip list
+
+          echo ""
+          echo "=== Frontend Dependencies ==="
+          cd /tmp/health-check/frontend
+          npm list --depth=0
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Template Health Check Failed - ${new Date().toISOString().split('T')[0]}`;
+            const body = `
+            ## Template Health Check Failed
+
+            The weekly template health check has failed. This likely means:
+            - A dependency has a breaking change
+            - A pinned version is no longer compatible
+            - An upstream API or service has changed
+
+            **Action Required:** Review the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) and update dependencies.
+
+            ### Checklist
+            - [ ] Review workflow logs
+            - [ ] Run \`./scripts/check-dependencies.sh\` locally
+            - [ ] Update affected dependencies
+            - [ ] Run \`pytest template/tests/ -v\` to validate
+            `;
+
+            // Check for existing open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'template-health'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['template-health', 'dependencies']
+              });
+            }
+
+  dependency-audit:
+    name: Audit Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install cookiecutter
+        run: pip install cookiecutter
+
+      - name: Generate minimal project
+        run: |
+          cookiecutter template/ --no-input \
+            project_name="Audit Project" \
+            project_slug="audit-project" \
+            include_observability="no" \
+            include_github_actions="no" \
+            include_kubernetes="no" \
+            include_sentry="no" \
+            --output-dir /tmp
+
+      - name: Python security audit
+        run: |
+          cd /tmp/audit-project/backend
+          pip install pip-audit
+          pip-audit -r <(grep -E "^[a-zA-Z]" pyproject.toml | grep "==" | sed 's/.*"\([^"]*\)".*/\1/') || true
+        continue-on-error: true
+
+      - name: npm security audit
+        run: |
+          cd /tmp/audit-project/frontend
+          npm install
+          npm audit || true
+        continue-on-error: true
